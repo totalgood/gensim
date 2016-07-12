@@ -14,7 +14,6 @@ is provided in the interface itself, so that the interfaces can be subclassed).
 from __future__ import with_statement
 
 import logging
-import itertools
 
 from gensim import utils, matutils
 from six.moves import xrange
@@ -49,33 +48,22 @@ class CorpusABC(utils.SaveLoad):
     for serializing the actual stream content.
     """
     def __iter__(self):
-        """
-        Iterate over the corpus, yielding one document at a time.
-        """
+        """Iterate over the corpus, yielding one document at a time."""
         raise NotImplementedError('cannot instantiate abstract base class')
 
+    def __len__(self):
+        """Return the number of documents in the corpus."""
+        raise NotImplementedError("must override __len__() before calling len(corpus)")
 
     def save(self, *args, **kwargs):
-        import warnings
-        warnings.warn("corpus.save() stores only the (tiny) iteration object; "
-            "to serialize the actual corpus content, use e.g. MmCorpus.serialize(corpus)")
+        """Pickle the iterator, **NOT** the contents (texts) the iterator iterates over"""
+        logger.warn("corpus.save() stores only the (tiny) iteration object; " +
+                    "to serialize the actual corpus content, use e.g. MmCorpus.serialize(corpus)")
         super(CorpusABC, self).save(*args, **kwargs)
-
-    def __len__(self):
-        """
-        Return the number of documents in the corpus.
-
-        This method is just the least common denominator and should really be
-        overridden when possible.
-        """
-        raise NotImplementedError("must override __len__() before calling len(corpus)")
-#        logger.warning("performing full corpus scan to determine its length; was this intended?")
-#        return sum(1 for doc in self) # sum(empty generator) == 0, so this works even for an empty corpus
 
     @staticmethod
     def save_corpus(fname, corpus, id2word=None, metadata=False):
-        """
-        Save an existing `corpus` to disk.
+        """Save an existing `corpus` to disk.
 
         Some formats also support saving the dictionary (`feature_id->word` mapping),
         which can in this case be provided by the optional `id2word` parameter.
@@ -92,16 +80,16 @@ class CorpusABC(utils.SaveLoad):
 
         Calling `serialize()` is preferred to calling `save_corpus()`.
 
+        Example implementation:
+        logger.info("converting corpus to ??? format: %s" % fname)
+        with utils.smart_open(fname, 'wb') as fout:
+            for doc in corpus:  # iterate over the document stream
+                fmt = str(doc)  # format the document appropriately...
+                fout.write(utils.to_utf8("%s\n" % fmt))  # serialize the formatted document to disk
         """
         raise NotImplementedError('cannot instantiate abstract base class')
 
-        # example code:
-        logger.info("converting corpus to ??? format: %s" % fname)
-        with utils.smart_open(fname, 'wb') as fout:
-            for doc in corpus: # iterate over the document stream
-                fmt = str(doc) # format the document appropriately...
-                fout.write(utils.to_utf8("%s\n" % fmt)) # serialize the formatted document to disk
-#endclass CorpusABC
+# endclass CorpusABC
 
 
 class TransformedCorpus(CorpusABC):
@@ -123,10 +111,10 @@ class TransformedCorpus(CorpusABC):
 
     def __getitem__(self, docno):
         if hasattr(self.corpus, '__getitem__'):
-           return self.obj[self.corpus[docno]]
+            return self.obj[self.corpus[docno]]
         else:
             raise RuntimeError('Type {} does not support slicing.'.format(type(self.corpus)))
-#endclass TransformedCorpus
+# endclass TransformedCorpus
 
 
 class TransformationABC(utils.SaveLoad):
@@ -155,14 +143,14 @@ class TransformationABC(utils.SaveLoad):
         """
         raise NotImplementedError('cannot instantiate abstract base class')
 
-
     def _apply(self, corpus, chunksize=None):
         """
         Apply the transformation to a whole corpus (as opposed to a single document)
         and return the result as another corpus.
         """
         return TransformedCorpus(self, corpus, chunksize)
-#endclass TransformationABC
+
+# endclass TransformationABC
 
 
 class SimilarityABC(utils.SaveLoad):
@@ -184,12 +172,10 @@ class SimilarityABC(utils.SaveLoad):
     def __init__(self, corpus):
         raise NotImplementedError("cannot instantiate Abstract Base Class")
 
-
     def get_similarities(self, doc):
         # (Sparse)MatrixSimilarity override this method so that they both use the
         # same  __getitem__ method, defined below
         raise NotImplementedError("cannot instantiate Abstract Base Class")
-
 
     def __getitem__(self, query):
         """Get similarities of document `query` to all documents in the corpus.
@@ -207,10 +193,7 @@ class SimilarityABC(utils.SaveLoad):
             # advertised in the doc). in fact, input can be a numpy or scipy.sparse matrix
             # as well, but in that case assume tricks are happening and don't normalize
             # anything (self.normalize has no effect).
-            if matutils.ismatrix(query):
-                import warnings
-                # warnings.warn("non-gensim input must already come normalized")
-            else:
+            if not matutils.ismatrix(query):
                 if is_corpus:
                     query = [matutils.unitvec(v) for v in query]
                 else:
@@ -227,7 +210,6 @@ class SimilarityABC(utils.SaveLoad):
         else:
             # otherwise, return top-n of the single input document
             return matutils.full2sparse_clipped(result, self.num_best)
-
 
     def __iter__(self):
         """
@@ -260,7 +242,7 @@ class SimilarityABC(utils.SaveLoad):
                 # (unlike numpy). so, clip the end of the chunk explicitly to make
                 # scipy.sparse happy
                 chunk_end = min(self.index.shape[0], chunk_start + self.chunksize)
-                chunk = self.index[chunk_start : chunk_end]
+                chunk = self.index[chunk_start:chunk_end]
                 if chunk.shape[0] > 1:
                     for sim in self[chunk]:
                         yield sim
@@ -272,4 +254,4 @@ class SimilarityABC(utils.SaveLoad):
 
         # restore old normalization value
         self.normalize = norm
-#endclass SimilarityABC
+# endclass SimilarityABC
