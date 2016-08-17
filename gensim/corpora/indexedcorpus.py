@@ -16,9 +16,9 @@ This functionality is achieved by storing an extra file (by default named the sa
 as the corpus file plus '.index' suffix) that stores the byte offset of the beginning
 of each document.
 """
+from traceback import format_exc
 
 import logging
-import shelve
 
 import numpy
 
@@ -44,16 +44,22 @@ class IndexedCorpus(interfaces.CorpusABC):
         [(0, 1.0), (1, 2.0)]
 
         """
+        self.index = None
+        self.length = None
+
+        if index_fname is None:
+            index_fname = utils.smart_extension(fname, '.index')
         try:
-            if index_fname is None:
-                index_fname = utils.smart_extension(fname, '.index')
             self.index = utils.unpickle(index_fname)
             # change self.index into a numpy.ndarray to support fancy indexing
             self.index = numpy.asarray(self.index)
-            logger.info("loaded corpus index from %s" % index_fname)
+            # length is a public attribute, but isn't used in __len__() unless there is no self.index.
+            # Nonetheless, make sure it always agrees with len()
+            self.length = len(self.index)
+            logger.info("loaded corpus index from {} for {} documents".format(index_fname, self.length))
         except:
-            self.index = None
-        self.length = None
+            logger.warn('Unable to load an index for the corpus at {} due to this exception:'.format(index_fname))
+            logger.warn(format_exc())
 
     @classmethod
     def serialize(serializer, fname, corpus, id2word=None, index_fname=None, progress_cnt=None, labels=None, metadata=False):
@@ -95,7 +101,7 @@ class IndexedCorpus(interfaces.CorpusABC):
 
         if offsets is None:
             raise NotImplementedError("called serialize on class %s which doesn't support indexing!" %
-                serializer.__name__)
+                                      serializer.__name__)
 
         # store offsets persistently, using pickle
         # we shouldn't have to worry about self.index being a numpy.ndarray as the serializer will return
@@ -127,7 +133,6 @@ class IndexedCorpus(interfaces.CorpusABC):
             return self.docbyoffset(self.index[docno])
         else:
             raise ValueError('Unrecognised value for docno, use either a single integer, a slice or a numpy.ndarray')
-
 
 
 # endclass IndexedCorpus
