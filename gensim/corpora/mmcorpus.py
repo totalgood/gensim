@@ -27,9 +27,9 @@ class MmCorpus(MmReader, IndexedCorpus):
         # avoid calling super(), too confusing
         logger.info('Initializing the MmReader for the main documents file...')
         MmReader.__init__(self, fname, transposed=transposed)
-        logger.info('Found {} documents and {} nonzero token counts in "{}", now trying to initalize the index...')
-        print('Now trying to init the index for "{}"...'.format(fname))
+        logger.info('Found {} documents and {} nonzero token counts in "{}", now trying to initalize the IndexedCorpus...')
         IndexedCorpus.__init__(self, fname, index_fname=index_fname)
+        logger.info('Index contained {} documents and {} nonzero token counts (num_nnz).'.format(len(self.index or []), self.num_nnz))
 
     def __iter__(self):
         """
