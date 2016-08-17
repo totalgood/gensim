@@ -29,7 +29,8 @@ class MmCorpus(MmReader, IndexedCorpus):
         MmReader.__init__(self, fname, transposed=transposed)
         logger.info('Found {} documents and {} nonzero token counts in "{}", now trying to initalize the IndexedCorpus...')
         IndexedCorpus.__init__(self, fname, index_fname=index_fname)
-        logger.info('Index contained {} documents and {} nonzero token counts (num_nnz).'.format(len(self.index or []), self.num_nnz))
+        logger.info('Index contained {} documents and {} nonzero token counts (num_nnz).'.format(
+            (-1 if self.index is None else len(self.index)), self.num_nnz))
 
     def __iter__(self):
         """
