@@ -31,7 +31,7 @@ and the gensim website moved to its present domain. In 2013, gensim got its curr
 Licensing
 ----------
 
-Gensim is licensed under the OSI-approved `GNU LGPL license <http://www.gnu.org/licenses/lgpl.html>`_.
+Gensim is licensed under the OSI-approved `GNU LGPLv2.1 license <http://www.gnu.org/licenses/old-licenses/lgpl-2.1.en.html>`_.
 This means that it's free for both personal and commercial use, but if you make any
 modification to gensim that you distribute to other people, you have to disclose
 the source code of these modifications.
@@ -59,13 +59,12 @@ Credit goes to all the people who contributed to gensim, be it in `discussions <
 ideas, `code contributions <https://github.com/piskvorky/gensim/pulls>`_ or `bug reports <https://github.com/piskvorky/gensim/issues>`_.
 It's really useful and motivating to get feedback, in any shape or form, so big thanks to you all!
 
-Some honorable mentions are included in the `CHANGELOG.txt <https://github.com/piskvorky/gensim/blob/develop/CHANGELOG.txt>`_.
-
+Some honorable mentions are included in the `CHANGELOG.txt <https://github.com/piskvorky/gensim/blob/develop/CHANGELOG.md>`_.
 
 Academic citing
 ----------------
 
-Gensim has been used in `many students' final theses as well as research papers <http://scholar.google.cz/citations?view_op=view_citation&hl=en&user=9vG_kV0AAAAJ&citation_for_view=9vG_kV0AAAAJ:u-x6o8ySG0sC>`_. When citing gensim,
+Gensim has been used in `many students' final theses as well as research papers <https://scholar.google.com/citations?view_op=view_citation&hl=en&user=9vG_kV0AAAAJ&citation_for_view=9vG_kV0AAAAJ:NaGl4SEjCO4C>`_. When citing gensim,
 please use `this BibTeX entry <bibtex_gensim.bib>`_::
 
   @inproceedings{rehurek_lrec,

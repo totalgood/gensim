@@ -8,6 +8,7 @@
 Automated tests for checking transformation algorithms (the models package).
 """
 
+
 from __future__ import with_statement
 
 import logging
@@ -17,6 +18,7 @@ import tempfile
 
 from six.moves import zip as izip
 from collections import namedtuple
+from testfixtures import log_capture
 
 import numpy as np
 
@@ -60,6 +62,12 @@ def testfile():
     # temporary data will be stored to this file
     return os.path.join(tempfile.gettempdir(), 'gensim_doc2vec.tst')
 
+def load_on_instance():
+    # Save and load a Doc2Vec Model on instance for test
+    model = doc2vec.Doc2Vec(DocsLeeCorpus(), min_count=1)
+    model.save(testfile())
+    model = doc2vec.Doc2Vec() # should fail at this point
+    return model.load(testfile())
 
 class TestDoc2VecModel(unittest.TestCase):
     def test_persistence(self):
@@ -86,8 +94,18 @@ class TestDoc2VecModel(unittest.TestCase):
         model = doc2vec.Doc2Vec(min_count=1)
         model.build_vocab(corpus)
         self.assertEqual(len(model.docvecs.doctag_syn0), 300)
-        self.assertEqual(model.docvecs[0].shape, (300,))
+        self.assertEqual(model.docvecs[0].shape, (100,))
         self.assertRaises(KeyError, model.__getitem__, '_*0')
+
+    def test_missing_string_doctag(self):
+        """Test doc2vec doctag alternatives"""
+        corpus = list(DocsLeeCorpus(True))
+        # force duplicated tags
+        corpus = corpus[0:10] + corpus
+
+        model = doc2vec.Doc2Vec(min_count=1)
+        model.build_vocab(corpus)
+        self.assertRaises(KeyError, model.docvecs.__getitem__, 'not_a_tag')
 
     def test_string_doctags(self):
         """Test doc2vec doctag alternatives"""
@@ -97,12 +115,15 @@ class TestDoc2VecModel(unittest.TestCase):
 
         model = doc2vec.Doc2Vec(min_count=1)
         model.build_vocab(corpus)
+
         self.assertEqual(len(model.docvecs.doctag_syn0), 300)
-        self.assertEqual(model.docvecs[0].shape, (300,))
-        self.assertEqual(model.docvecs['_*0'].shape, (300,))
+        self.assertEqual(model.docvecs[0].shape, (100,))
+        self.assertEqual(model.docvecs['_*0'].shape, (100,))
         self.assertTrue(all(model.docvecs['_*0'] == model.docvecs[0]))
         self.assertTrue(max(d.offset for d in model.docvecs.doctags.values()) < len(model.docvecs.doctags))
         self.assertTrue(max(model.docvecs._int_index(str_key) for str_key in model.docvecs.doctags.keys()) < len(model.docvecs.doctag_syn0))
+        # verify docvecs.most_similar() returns string doctags rather than indexes
+        self.assertEqual(model.docvecs.offset2doctag[0], model.docvecs.most_similar([model.docvecs[0]])[0][0])
 
     def test_empty_errors(self):
         # no input => "RuntimeError: you must first build vocabulary before training the model"
@@ -111,7 +132,17 @@ class TestDoc2VecModel(unittest.TestCase):
         # input not empty, but rather completely filtered out
         self.assertRaises(RuntimeError, doc2vec.Doc2Vec, list_corpus, min_count=10000)
 
-    def model_sanity(self, model):
+    def test_similarity_unseen_docs(self):
+        """Test similarity of out of training sentences"""
+        rome_str = ['rome', 'italy']
+        car_str = ['car']
+        corpus = list(DocsLeeCorpus(True))
+
+        model = doc2vec.Doc2Vec(min_count=1)
+        model.build_vocab(corpus)
+        self.assertTrue(model.docvecs.similarity_unseen_docs(model, rome_str, rome_str) > model.docvecs.similarity_unseen_docs(model, rome_str, car_str))
+
+    def model_sanity(self, model, keep_training=True):
         """Any non-trivial model on DocsLeeCorpus can pass these sanity checks"""
         fire1 = 0  # doc 0 sydney fires
         fire2 = 8  # doc 8 sydney fires
@@ -121,7 +152,7 @@ class TestDoc2VecModel(unittest.TestCase):
         doc0_inferred = model.infer_vector(list(DocsLeeCorpus())[0].words)
         sims_to_infer = model.docvecs.most_similar([doc0_inferred], topn=len(model.docvecs))
         f_rank = [docid for docid, sim in sims_to_infer].index(fire1)
-        self.assertLess(fire1, 10)
+        self.assertLess(f_rank, 10)
 
         # fire2 should be top30 close to fire1
         sims = model.docvecs.most_similar(fire1, topn=len(model.docvecs))
@@ -136,24 +167,36 @@ class TestDoc2VecModel(unittest.TestCase):
         self.assertEqual(list(zip(*sims))[0], list(zip(*sims2))[0])  # same doc ids
         self.assertTrue(np.allclose(list(zip(*sims))[1], list(zip(*sims2))[1]))  # close-enough dists
 
+        # sim results should be in clip range if given
+        clip_sims = model.docvecs.most_similar(fire1, clip_start=len(model.docvecs) // 2, clip_end=len(model.docvecs) * 2 // 3)
+        sims_doc_id = [docid for docid, sim in clip_sims]
+        for s_id in sims_doc_id:
+            self.assertTrue(len(model.docvecs) // 2 <= s_id <= len(model.docvecs) * 2 // 3)
+
         # tennis doc should be out-of-place among fire news
         self.assertEqual(model.docvecs.doesnt_match([fire1, tennis1, fire2]), tennis1)
 
         # fire docs should be closer than fire-tennis
         self.assertTrue(model.docvecs.similarity(fire1, fire2) > model.docvecs.similarity(fire1, tennis1))
 
+        # keep training after save
+        if keep_training:
+            model.save(testfile())
+            loaded = doc2vec.Doc2Vec.load(testfile())
+            loaded.train(sentences, total_examples=loaded.corpus_count, epochs=loaded.iter)
+
     def test_training(self):
         """Test doc2vec training."""
         corpus = DocsLeeCorpus()
-        model = doc2vec.Doc2Vec(size=100, min_count=2, iter=20)
+        model = doc2vec.Doc2Vec(size=100, min_count=2, iter=20, workers=1)
         model.build_vocab(corpus)
         self.assertEqual(model.docvecs.doctag_syn0.shape, (300, 100))
-        model.train(corpus)
+        model.train(corpus, total_examples=model.corpus_count, epochs=model.iter)
 
         self.model_sanity(model)
 
         # build vocab and train in one step; must be the same as above
-        model2 = doc2vec.Doc2Vec(corpus, size=100, min_count=2, iter=20)
+        model2 = doc2vec.Doc2Vec(corpus, size=100, min_count=2, iter=20, workers=1)
         self.models_equal(model, model2)
 
     def test_dbow_hs(self):
@@ -242,14 +285,12 @@ class TestDoc2VecModel(unittest.TestCase):
         model = doc2vec.Doc2Vec()
         model.build_vocab(mixed_tag_corpus)
         expected_length = len(sentences) + len(model.docvecs.doctags)  # 9 sentences, 7 unique first tokens
-        print(model.docvecs.doctags)
-        print(model.docvecs.count)
         self.assertEquals(len(model.docvecs.doctag_syn0), expected_length)
 
     def models_equal(self, model, model2):
         # check words/hidden-weights
-        self.assertEqual(len(model.vocab), len(model2.vocab))
-        self.assertTrue(np.allclose(model.syn0, model2.syn0))
+        self.assertEqual(len(model.wv.vocab), len(model2.wv.vocab))
+        self.assertTrue(np.allclose(model.wv.syn0, model2.wv.syn0))
         if model.hs:
             self.assertTrue(np.allclose(model.syn1, model2.syn1))
         if model.negative:
@@ -259,6 +300,64 @@ class TestDoc2VecModel(unittest.TestCase):
         self.assertEqual(len(model.docvecs.offset2doctag), len(model2.docvecs.offset2doctag))
         self.assertTrue(np.allclose(model.docvecs.doctag_syn0, model2.docvecs.doctag_syn0))
 
+    def test_delete_temporary_training_data(self):
+        """Test doc2vec model after delete_temporary_training_data"""
+        for i in [0, 1]:
+            for j in [0, 1]:
+                model = doc2vec.Doc2Vec(sentences, size=5, min_count=1, window=4, hs=i, negative=j)
+                if i:
+                    self.assertTrue(hasattr(model, 'syn1'))
+                if j:
+                    self.assertTrue(hasattr(model, 'syn1neg'))
+                self.assertTrue(hasattr(model, 'syn0_lockf'))
+                model.delete_temporary_training_data(keep_doctags_vectors=False, keep_inference=False)
+                self.assertTrue(len(model['human']), 10)
+                self.assertTrue(model.wv.vocab['graph'].count, 5)
+                self.assertTrue(not hasattr(model, 'syn1'))
+                self.assertTrue(not hasattr(model, 'syn1neg'))
+                self.assertTrue(not hasattr(model, 'syn0_lockf'))
+                self.assertTrue(model.docvecs and not hasattr(model.docvecs, 'doctag_syn0'))
+                self.assertTrue(model.docvecs and not hasattr(model.docvecs, 'doctag_syn0_lockf'))
+        model = doc2vec.Doc2Vec(list_corpus, dm=1, dm_mean=1, size=24, window=4, hs=1, negative=0, alpha=0.05, min_count=2, iter=20)
+        model.delete_temporary_training_data(keep_doctags_vectors=True, keep_inference=True)
+        self.assertTrue(model.docvecs and hasattr(model.docvecs, 'doctag_syn0'))
+        self.assertTrue(hasattr(model, 'syn1'))
+        self.model_sanity(model, keep_training=False)
+        model = doc2vec.Doc2Vec(list_corpus, dm=1, dm_mean=1, size=24, window=4, hs=0, negative=1, alpha=0.05, min_count=2, iter=20)
+        model.delete_temporary_training_data(keep_doctags_vectors=True, keep_inference=True)
+        self.model_sanity(model, keep_training=False)
+        self.assertTrue(hasattr(model, 'syn1neg'))
+
+    @log_capture()
+    def testBuildVocabWarning(self, l):
+        """Test if logger warning is raised on non-ideal input to a doc2vec model"""
+        raw_sentences = ['human', 'machine']
+        sentences = [doc2vec.TaggedDocument(words, [i]) for i, words in enumerate(raw_sentences)]
+        model = doc2vec.Doc2Vec()
+        model.build_vocab(sentences)
+        warning = "Each 'words' should be a list of words (usually unicode strings)."
+        self.assertTrue(warning in str(l))
+
+    @log_capture()
+    def testTrainWarning(self, l):
+        """Test if warning is raised if alpha rises during subsequent calls to train()"""
+        raw_sentences = [['human'],
+                         ['graph', 'trees']]
+        sentences = [doc2vec.TaggedDocument(words, [i]) for i, words in enumerate(raw_sentences)]
+        model = doc2vec.Doc2Vec(alpha=0.025, min_alpha=0.025, min_count=1, workers=8, size=5)
+        model.build_vocab(sentences)
+        for epoch in range(10):
+            model.train(sentences, total_examples=model.corpus_count, epochs=model.iter)
+            model.alpha -= 0.002
+            model.min_alpha = model.alpha
+            if epoch == 5:
+                model.alpha += 0.05
+        warning = "Effective 'alpha' higher than previous training cycles"
+        self.assertTrue(warning in str(l))
+        
+    def testLoadOnClassError(self):
+        """Test if exception is raised when loading doc2vec model on instance"""
+        self.assertRaises(AttributeError, load_on_instance)
 #endclass TestDoc2VecModel
 
 

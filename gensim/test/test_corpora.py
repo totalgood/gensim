@@ -15,13 +15,23 @@ import tempfile
 import itertools
 import doctest
 
-import numpy
+import numpy as np
 
-from gensim.utils import to_unicode, smart_extension, datapath
+from gensim.utils import to_unicode  # , datapath
 from gensim.interfaces import TransformedCorpus
 from gensim.corpora import (bleicorpus, mmcorpus, lowcorpus, svmlightcorpus,
                             ucicorpus, malletcorpus, textcorpus, indexedcorpus,
                             shakescorpus)
+
+# needed because sample data files are located in the same folder
+module_path = os.path.dirname(__file__)
+
+
+def datapath(fname):
+    """Path to data file in test_data directory within gensim's installation path.
+
+    Note: duplicates gensim.utils.datapath() which also returns this same path."""
+    return os.path.join(module_path, 'test_data', fname)
 
 
 def testfile():
@@ -192,15 +202,15 @@ class CorpusTestCase(unittest.TestCase):
         self.assertEquals([d for i, d in enumerate(docs) if i in [1, 3, 4]], list(c))
         self.assertEquals([d for i, d in enumerate(docs) if i in [1, 3, 4]], list(c))
         self.assertEquals(len(corpus[[0, 1, -1]]), 3)
-        self.assertEquals(len(corpus[numpy.asarray([0, 1, -1])]), 3)
+        self.assertEquals(len(corpus[np.asarray([0, 1, -1])]), 3)
 
         # check that TransformedCorpus supports indexing when the underlying
         # corpus does, and throws an error otherwise
         if hasattr(corpus, 'index') and corpus.index is not None:
             corpus_ = TransformedCorpus(DummyTransformer(), corpus)
-            self.assertEqual(corpus_[0][0][1], docs[0][0][1]+1)
+            self.assertEqual(corpus_[0][0][1], docs[0][0][1] + 1)
             self.assertRaises(ValueError, _get_slice, corpus_, set([1]))
-            transformed_docs = [val+1 for i, d in enumerate(docs) for _, val in d if i in [1, 3, 4]]
+            transformed_docs = [val + 1 for i, d in enumerate(docs) for _, val in d if i in [1, 3, 4]]
             self.assertEquals(transformed_docs, list(v for doc in corpus_[[1, 3, 4]] for _, v in doc))
             self.assertEqual(3, len(corpus_[[1, 3, 4]]))
         else:
@@ -212,11 +222,18 @@ class CorpusTestCase(unittest.TestCase):
 class TestMmCorpus(CorpusTestCase):
     def setUp(self):
         self.corpus_class = mmcorpus.MmCorpus
+        self.corpus = self.corpus_class(datapath('testcorpus.mm'))
         self.file_extension = '.mm'
 
     def test_serialize_compressed(self):
         # MmCorpus needs file write with seek => doesn't support compressed output (only input)
         pass
+
+    def test_load(self):
+        self.assertEqual(self.corpus.num_docs, 9)
+        self.assertEqual(self.corpus.num_terms, 12)
+        self.assertEqual(self.corpus.num_nnz, 28)
+        self.assertEqual(tuple(self.corpus.index), (97, 121, 169, 201, 225, 249, 258, 276, 303))
 
 
 class TestSvmLightCorpus(CorpusTestCase):

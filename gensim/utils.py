@@ -11,6 +11,7 @@ This module contains various general utility functions.
 from __future__ import with_statement
 
 import logging
+import warnings
 
 logger = logging.getLogger(__name__)
 
@@ -36,13 +37,14 @@ import sys
 from contextlib import contextmanager
 import subprocess
 
-import numpy
+import numpy as np
+import numbers
 import scipy.sparse
 
 if sys.version_info[0] >= 3:
     unicode = str
 
-from six import iteritems, u, string_types, unichr
+from six import iterkeys, iteritems, u, string_types, unichr
 from six.moves import xrange
 
 try:
@@ -83,11 +85,28 @@ RE_HTML_ENTITY = re.compile(r'&(#?)([xX]?)(\w{1,8});', re.UNICODE)
 def datapath(fname):
     """Return the full, absolute path to a data file located in gensim/test/test_data/<fname>
 
+    Some modules define their own datapath functions.
+    The path returned by this function is for use across different modules and tests.
+
     >>> expected = 'gensim' + os.path.sep + 'test' + os.path.sep + 'test_data' + os.path.sep + 'ldavowpalwabbit.txt'
-    >>> datapath('ldavowpalwabbit.txt').endswith(expected)
+    >>> get_data_path('ldavowpalwabbit.txt').endswith(expected)
     True
     """
     return os.path.join(os.path.dirname(os.path.abspath(__file__)), 'test', 'test_data', fname)
+
+
+def get_random_state(seed):
+    """
+    Turn seed into a np.random.RandomState instance.
+    Method originally from maciejkula/glove-python, and written by @joshloyal.
+    """
+    if seed is None or seed is np.random:
+        return np.random.mtrand._rand
+    if isinstance(seed, (numbers.Integral, np.integer)):
+        return np.random.RandomState(seed)
+    if isinstance(seed, np.random.RandomState):
+        return seed
+    raise ValueError('%r cannot be used to seed a np.random.RandomState instance' % seed)
 
 
 def synchronous(tlockname):
@@ -102,7 +121,7 @@ def synchronous(tlockname):
             tlock = getattr(self, tlockname)
             logger.debug("acquiring lock %r for %s" % (tlockname, func.__name__))
 
-            with tlock: # use lock as a context manager to perform safe acquire/release pairs
+            with tlock:  # use lock as a context manager to perform safe acquire/release pairs
                 logger.debug("acquired lock %r for %s" % (tlockname, func.__name__))
                 result = func(self, *args, **kwargs)
                 logger.debug("releasing lock %r for %s" % (tlockname, func.__name__))
@@ -114,10 +133,13 @@ def synchronous(tlockname):
 class NoCM(object):
     def acquire(self):
         pass
+
     def release(self):
         pass
+
     def __enter__(self):
         pass
+
     def __exit__(self, type, value, traceback):
         pass
 nocm = NoCM()
@@ -227,6 +249,11 @@ def any2unicode(text, encoding='utf8', errors='strict'):
 to_unicode = any2unicode
 
 
+def call_on_class_only(*args, **kwargs):
+    """Raise exception when load methods are called on instance"""
+    raise AttributeError('This method should be called on a class object.')
+
+
 class SaveLoad(object):
     """
     Objects which inherit from this class have save/load functions, which un/pickle
@@ -256,8 +283,8 @@ class SaveLoad(object):
 
         obj = unpickle(fname)
         obj._load_specials(fname, mmap, compress, subname)
+        logger.info("loaded %s", fname)
         return obj
-
 
     def _load_specials(self, fname, mmap, compress, subname):
         """
@@ -265,7 +292,6 @@ class SaveLoad(object):
         opportunity to recursively included SaveLoad instances.
 
         """
-
         mmap_error = lambda x, y: IOError(
             'Cannot mmap compressed object %s in file %s. ' % (x, y) +
             'Use `load(fname, mmap=None)` or uncompress files manually.')
@@ -284,9 +310,9 @@ class SaveLoad(object):
                 if mmap:
                     raise mmap_error(attrib, subname(fname, attrib))
 
-                val = numpy.load(subname(fname, attrib))['val']
+                val = np.load(subname(fname, attrib))['val']
             else:
-                val = numpy.load(subname(fname, attrib), mmap_mode=mmap)
+                val = np.load(subname(fname, attrib), mmap_mode=mmap)
 
             setattr(self, attrib, val)
 
@@ -298,21 +324,20 @@ class SaveLoad(object):
                 if mmap:
                     raise mmap_error(attrib, subname(fname, attrib))
 
-                with numpy.load(subname(fname, attrib, 'sparse')) as f:
+                with np.load(subname(fname, attrib, 'sparse')) as f:
                     sparse.data = f['data']
                     sparse.indptr = f['indptr']
                     sparse.indices = f['indices']
             else:
-                sparse.data = numpy.load(subname(fname, attrib, 'data'), mmap_mode=mmap)
-                sparse.indptr = numpy.load(subname(fname, attrib, 'indptr'), mmap_mode=mmap)
-                sparse.indices = numpy.load(subname(fname, attrib, 'indices'), mmap_mode=mmap)
+                sparse.data = np.load(subname(fname, attrib, 'data'), mmap_mode=mmap)
+                sparse.indptr = np.load(subname(fname, attrib, 'indptr'), mmap_mode=mmap)
+                sparse.indices = np.load(subname(fname, attrib, 'indices'), mmap_mode=mmap)
 
             setattr(self, attrib, sparse)
 
         for attrib in getattr(self, '__ignoreds', []):
             logger.info("setting ignored attribute %s to None" % (attrib))
             setattr(self, attrib, None)
-
 
     @staticmethod
     def _adapt_by_suffix(fname):
@@ -324,7 +349,6 @@ class SaveLoad(object):
             compress = False
             subname = lambda *args: '.'.join(list(args) + ['npy'])
         return (compress, subname)
-
 
     def _smart_save(self, fname, separately=None, sep_limit=10 * 1024**2,
                     ignore=frozenset(), pickle_protocol=2):
@@ -363,7 +387,7 @@ class SaveLoad(object):
             for obj, asides in restores:
                 for attrib, val in iteritems(asides):
                     setattr(obj, attrib, val)
-
+        logger.info("saved %s", fname)
 
     def _save_specials(self, fname, separately, sep_limit, ignore, pickle_protocol, compress, subname):
         """
@@ -380,7 +404,7 @@ class SaveLoad(object):
         if separately is None:
             separately = []
             for attrib, val in iteritems(self.__dict__):
-                if isinstance(val, numpy.ndarray) and val.size >= sep_limit:
+                if isinstance(val, np.ndarray) and val.size >= sep_limit:
                     separately.append(attrib)
                 elif isinstance(val, sparse_matrices) and val.nnz >= sep_limit:
                     separately.append(attrib)
@@ -396,22 +420,23 @@ class SaveLoad(object):
         for attrib, val in iteritems(self.__dict__):
             if hasattr(val, '_save_specials'):  # better than 'isinstance(val, SaveLoad)' if IPython reloading
                 recursive_saveloads.append(attrib)
-                cfname = '.'.join((fname,attrib))
-                restores.extend(val._save_specials(cfname, None, sep_limit, ignore,
-                                                   pickle_protocol, compress, subname))
+                cfname = '.'.join((fname, attrib))
+                restores.extend(val._save_specials(
+                    cfname, None, sep_limit, ignore,
+                    pickle_protocol, compress, subname))
 
         try:
             numpys, scipys, ignoreds = [], [], []
             for attrib, val in iteritems(asides):
-                if isinstance(val, numpy.ndarray) and attrib not in ignore:
+                if isinstance(val, np.ndarray) and attrib not in ignore:
                     numpys.append(attrib)
-                    logger.info("storing numpy array '%s' to %s" % (
+                    logger.info("storing np array '%s' to %s" % (
                         attrib, subname(fname, attrib)))
 
                     if compress:
-                        numpy.savez_compressed(subname(fname, attrib), val=numpy.ascontiguousarray(val))
+                        np.savez_compressed(subname(fname, attrib), val=np.ascontiguousarray(val))
                     else:
-                        numpy.save(subname(fname, attrib), numpy.ascontiguousarray(val))
+                        np.save(subname(fname, attrib), np.ascontiguousarray(val))
 
                 elif isinstance(val, (scipy.sparse.csr_matrix, scipy.sparse.csc_matrix)) and attrib not in ignore:
                     scipys.append(attrib)
@@ -419,14 +444,15 @@ class SaveLoad(object):
                         attrib, subname(fname, attrib)))
 
                     if compress:
-                        numpy.savez_compressed(subname(fname, attrib, 'sparse'),
-                                               data=val.data,
-                                               indptr=val.indptr,
-                                               indices=val.indices)
+                        np.savez_compressed(
+                            subname(fname, attrib, 'sparse'),
+                            data=val.data,
+                            indptr=val.indptr,
+                            indices=val.indices)
                     else:
-                        numpy.save(subname(fname, attrib, 'data'), val.data)
-                        numpy.save(subname(fname, attrib, 'indptr'), val.indptr)
-                        numpy.save(subname(fname, attrib, 'indices'), val.indices)
+                        np.save(subname(fname, attrib, 'data'), val.data)
+                        np.save(subname(fname, attrib, 'indptr'), val.indptr)
+                        np.save(subname(fname, attrib, 'indices'), val.indices)
 
                     data, indptr, indices = val.data, val.indptr, val.indices
                     val.data, val.indptr, val.indices = None, None, None
@@ -450,7 +476,6 @@ class SaveLoad(object):
                 setattr(self, attrib, val)
             raise
         return restores + [(self, asides)]
-
 
     def save(self, fname_or_handle, separately=None, sep_limit=10 * 1024**2,
              ignore=frozenset(), pickle_protocol=2):
@@ -502,7 +527,7 @@ def get_max_id(corpus):
     """
     maxid = -1
     for document in corpus:
-        maxid = max(maxid, max([-1] + [fieldid for fieldid, _ in document])) # [-1] to avoid exceptions from max(empty)
+        maxid = max(maxid, max([-1] + [fieldid for fieldid, _ in document]))  # [-1] to avoid exceptions from max(empty)
     return maxid
 
 
@@ -518,10 +543,8 @@ class FakeDict(object):
     def __init__(self, num_terms):
         self.num_terms = num_terms
 
-
     def __str__(self):
         return "FakeDict(num_terms=%s)" % self.num_terms
-
 
     def __getitem__(self, val):
         if 0 <= val < self.num_terms:
@@ -582,7 +605,7 @@ def is_corpus(obj):
 
     """
     try:
-        if 'Corpus' in obj.__class__.__name__: # the most common case, quick hack
+        if 'Corpus' in obj.__class__.__name__:  # the most common case, quick hack
             return True, obj
     except:
         pass
@@ -594,15 +617,14 @@ def is_corpus(obj):
             doc1 = next(obj)
             obj = itertools.chain([doc1], obj)
         else:
-            doc1 = next(iter(obj)) # empty corpus is resolved to False here
-        if len(doc1) == 0: # sparse documents must have a __len__ function (list, tuple...)
-            return True, obj # the first document is empty=>assume this is a corpus
-        id1, val1 = next(iter(doc1)) # if obj is a numpy array, it resolves to False here
-        id1, val1 = int(id1), float(val1) # must be a 2-tuple (integer, float)
-    except:
+            doc1 = next(iter(obj))  # empty corpus is resolved to False here
+        if len(doc1) == 0:  # sparse documents must have a __len__ function (list, tuple...)
+            return True, obj  # the first document is empty=>assume this is a corpus
+        id1, val1 = next(iter(doc1))  # if obj is a 1D numpy array(scalars) instead of 2-tuples, it resolves to False here
+        id1, val1 = int(id1), float(val1)  # must be a 2-tuple (integer, float)
+    except Exception:
         return False, obj
     return True, obj
-
 
 
 def get_my_ip():
@@ -659,6 +681,7 @@ class RepeatCorpus(SaveLoad):
     def __iter__(self):
         return itertools.islice(itertools.cycle(self.corpus), self.reps)
 
+
 class RepeatCorpusNTimes(SaveLoad):
 
     def __init__(self, corpus, n):
@@ -676,6 +699,7 @@ class RepeatCorpusNTimes(SaveLoad):
         for _ in xrange(self.n):
             for document in self.corpus:
                 yield document
+
 
 class ClippedCorpus(SaveLoad):
     def __init__(self, corpus, max_docs=None):
@@ -696,6 +720,7 @@ class ClippedCorpus(SaveLoad):
     def __len__(self):
         return min(self.max_docs, len(self.corpus))
 
+
 class SlicedCorpus(SaveLoad):
     def __init__(self, corpus, slice_):
         """
@@ -704,11 +729,11 @@ class SlicedCorpus(SaveLoad):
         Negative slicing can only be used if the corpus is indexable.
         Otherwise, the corpus will be iterated over.
 
-        Slice can also be a numpy.ndarray to support fancy indexing.
+        Slice can also be a np.ndarray to support fancy indexing.
 
         NOTE: calculating the size of a SlicedCorpus is expensive
         when using a slice as the corpus has to be iterated over once.
-        Using a list or numpy.ndarray does not have this drawback, but
+        Using a list or np.ndarray does not have this drawback, but
         consumes more memory.
         """
         self.corpus = corpus
@@ -726,12 +751,13 @@ class SlicedCorpus(SaveLoad):
     def __len__(self):
         # check cached length, calculate if needed
         if self.length is None:
-            if isinstance(self.slice_, (list, numpy.ndarray)):
+            if isinstance(self.slice_, (list, np.ndarray)):
                 self.length = len(self.slice_)
             else:
                 self.length = sum(1 for x in self)
 
         return self.length
+
 
 def safe_unichr(intval):
     try:
@@ -741,6 +767,7 @@ def safe_unichr(intval):
         s = "\\U%08x" % intval
         # return UTF16 surrogate pair
         return s.decode('unicode-escape')
+
 
 def decode_htmlentities(text):
     """
@@ -791,13 +818,12 @@ def chunkize_serial(iterable, chunksize, as_numpy=False):
     [[0, 1, 2], [3, 4, 5], [6, 7, 8], [9]]
 
     """
-    import numpy
     it = iter(iterable)
     while True:
         if as_numpy:
             # convert each document to a 2d numpy array (~6x faster when transmitting
             # chunk data over the wire, in Pyro)
-            wrapped_chunk = [[numpy.array(doc) for doc in itertools.islice(it, int(chunksize))]]
+            wrapped_chunk = [[np.array(doc) for doc in itertools.islice(it, int(chunksize))]]
         else:
             wrapped_chunk = [list(itertools.islice(it, int(chunksize)))]
         if not wrapped_chunk[0]:
@@ -818,8 +844,6 @@ class InputQueue(multiprocessing.Process):
         self.as_numpy = as_numpy
 
     def run(self):
-        if self.as_numpy:
-            import numpy # don't clutter the global namespace with a dependency on numpy
         it = iter(self.corpus)
         while True:
             chunk = itertools.islice(it, self.chunksize)
@@ -827,7 +851,7 @@ class InputQueue(multiprocessing.Process):
                 # HACK XXX convert documents to numpy arrays, to save memory.
                 # This also gives a scipy warning at runtime:
                 # "UserWarning: indices array has non-integer dtype (float64)"
-                wrapped_chunk = [[numpy.asarray(doc) for doc in chunk]]
+                wrapped_chunk = [[np.asarray(doc) for doc in chunk]]
             else:
                 wrapped_chunk = [list(chunk)]
 
@@ -846,7 +870,7 @@ class InputQueue(multiprocessing.Process):
 
 
 if os.name == 'nt':
-    logger.info("detected Windows; aliasing chunkize to chunkize_serial")
+    warnings.warn("detected Windows; aliasing chunkize to chunkize_serial")
 
     def chunkize(corpus, chunksize, maxsize=0, as_numpy=False):
         for chunk in chunkize_serial(corpus, chunksize, as_numpy=as_numpy):
@@ -916,9 +940,12 @@ def pickle(obj, fname, protocol=2):
 
 def unpickle(fname):
     """Load pickled object from `fname`"""
-    with smart_open(fname) as f:
+    with smart_open(fname, 'rb') as f:
         # Because of loading from S3 load can't be used (missing readline in smart_open)
-        return _pickle.loads(f.read())
+        if sys.version_info > (3, 0):
+            return _pickle.load(f, encoding='latin1')
+        else:
+            return _pickle.loads(f.read())
 
 
 def revdict(d):
@@ -943,11 +970,11 @@ def toptexts(query, texts, index, n=10):
     Return a list of 3-tuples (docid, doc's similarity to the query, texts[docid]).
 
     """
-    sims = index[query] # perform a similarity query against the corpus
+    sims = index[query]  # perform a similarity query against the corpus
     sims = sorted(enumerate(sims), key=lambda item: -item[1])
 
     result = []
-    for topid, topcosine in sims[:n]: # only consider top-n most similar docs
+    for topid, topcosine in sims[:n]:  # only consider top-n most similar docs
         result.append((topid, topcosine, texts[topid]))
     return result
 
@@ -981,29 +1008,18 @@ def upload_chunked(server, docs, chunksize=1000, preprocess=None):
         start = end
 
 
-def getNS():
+def getNS(host=None, port=None, broadcast=True, hmac_key=None):
     """
-    Return a Pyro name server proxy. If there is no name server running,
-    start one on 0.0.0.0 (all interfaces), as a background process.
-
+    Return a Pyro name server proxy.
     """
     import Pyro4
     try:
-        return Pyro4.locateNS()
+        return Pyro4.locateNS(host, port, broadcast, hmac_key)
     except Pyro4.errors.NamingError:
-        logger.info("Pyro name server not found; starting a new one")
-    os.system("python -m Pyro4.naming -n 0.0.0.0 &")
-    # TODO: spawn a proper daemon ala http://code.activestate.com/recipes/278731/ ?
-    # like this, if there's an error somewhere, we'll never know... (and the loop
-    # below will block). And it probably doesn't work on windows, either.
-    while True:
-        try:
-            return Pyro4.locateNS()
-        except:
-            pass
+        raise RuntimeError("Pyro name server not found")
 
 
-def pyro_daemon(name, obj, random_suffix=False, ip=None, port=None):
+def pyro_daemon(name, obj, random_suffix=False, ip=None, port=None, ns_conf={}):
     """
     Register object with name server (starting the name server if not running
     yet) and block until the daemon is terminated. The object is registered under
@@ -1013,7 +1029,7 @@ def pyro_daemon(name, obj, random_suffix=False, ip=None, port=None):
     if random_suffix:
         name += '.' + hex(random.randint(0, 0xffffff))[2:]
     import Pyro4
-    with getNS() as ns:
+    with getNS(**ns_conf) as ns:
         with Pyro4.Daemon(ip or get_my_ip(), port or 0) as daemon:
             # register server for remote access
             uri = daemon.register(obj, name)
@@ -1025,18 +1041,17 @@ def pyro_daemon(name, obj, random_suffix=False, ip=None, port=None):
 
 def has_pattern():
     """
-    Function to check if there is installed pattern library
+    Function which returns a flag indicating whether pattern is installed or not
     """
-    pattern = False
     try:
         from pattern.en import parse
-        pattern = True
+        return True
     except ImportError:
-        logger.info("Pattern library is not installed, lemmatization won't be available.")
-    return pattern
+        return False
 
 
-def lemmatize(content, allowed_tags=re.compile('(NN|VB|JJ|RB)'), light=False,
+def lemmatize(
+        content, allowed_tags=re.compile('(NN|VB|JJ|RB)'), light=False,
         stopwords=frozenset(), min_length=2, max_length=15):
     """
     This function is only available when the optional 'pattern' package is installed.
@@ -1058,8 +1073,7 @@ def lemmatize(content, allowed_tags=re.compile('(NN|VB|JJ|RB)'), light=False,
 
     """
     if not has_pattern():
-        raise ImportError("Pattern library is not installed. Pattern library is needed in order  \
-         to use lemmatize function")
+        raise ImportError("Pattern library is not installed. Pattern library is needed in order to use lemmatize function")
     from pattern.en import parse
 
     if light:
@@ -1090,8 +1104,8 @@ def mock_data_row(dim=1000, prob_nnz=0.5, lam=1.0):
     a Poisson distribution with parameter lambda equal to `lam`.
 
     """
-    nnz = numpy.random.uniform(size=(dim,))
-    data = [(i, float(numpy.random.poisson(lam=lam) + 1.0))
+    nnz = np.random.uniform(size=(dim,))
+    data = [(i, float(np.random.poisson(lam=lam) + 1.0))
             for i in xrange(dim) if nnz[i] < prob_nnz]
     return data
 
@@ -1152,15 +1166,18 @@ def keep_vocab_item(word, count, min_count, trim_rule=None):
         else:
             return default_res
 
-def check_output(*popenargs, **kwargs):
-    r"""Run command with arguments and return its output as a byte string.
+
+def check_output(stdout=subprocess.PIPE, *popenargs, **kwargs):
+    """
+    Run command with arguments and return its output as a byte string.
     Backported from Python 2.7 as it's implemented as pure python on stdlib.
-    >>> check_output(['/usr/bin/python', '--version'])
+
+    >>> check_output(args=['/usr/bin/python', '--version'])
     Python 2.6.2
     Added extra KeyboardInterrupt handling
     """
     try:
-        process = subprocess.Popen(stdout=subprocess.PIPE, *popenargs, **kwargs)
+        process = subprocess.Popen(stdout=stdout, *popenargs, **kwargs)
         output, unused_err = process.communicate()
         retcode = process.poll()
         if retcode:
@@ -1174,3 +1191,13 @@ def check_output(*popenargs, **kwargs):
     except KeyboardInterrupt:
         process.terminate()
         raise
+
+
+def sample_dict(d, n=10, use_random=True):
+    """
+    Pick `n` items from dictionary `d` and return them as a list.
+    The items are picked randomly if `use_random` is True, otherwise picked
+    according to natural dict iteration.
+    """
+    selected_keys = random.sample(list(d), min(len(d), n)) if use_random else itertools.islice(iterkeys(d), n)
+    return [(key, d[key]) for key in selected_keys]

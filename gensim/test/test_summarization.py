@@ -87,6 +87,17 @@ class TestSummarizationTest(unittest.TestCase):
         text = "\n".join(text.split('\n')[:8])
 
         self.assertTrue(summarize(text) is not None)
+        
+    def test_text_summarization_returns_input_on_single_input_sentence(self):
+        pre_path = os.path.join(os.path.dirname(__file__), 'test_data')
+
+        with utils.smart_open(os.path.join(pre_path, "testsummarization_unrelated.txt"), mode="r") as f:
+            text = f.read()
+
+        # Keeps the first sentence only.
+        text = text.split('\n')[0]
+
+        self.assertRaises(ValueError, summarize, text)
 
     def test_corpus_summarization_raises_exception_on_short_input_text(self):
         pre_path = os.path.join(os.path.dirname(__file__), 'test_data')
@@ -96,7 +107,7 @@ class TestSummarizationTest(unittest.TestCase):
 
         # Keeps the first 8 sentences to make the text shorter.
         sentences = text.split('\n')[:8]
-
+        
         # Generate the corpus.
         tokens = [sentence.split() for sentence in sentences]
         dictionary = Dictionary(tokens)
@@ -130,6 +141,21 @@ class TestSummarizationTest(unittest.TestCase):
 
             self.assertEqual(len(selected_docs), expected_summary_length)
 
+    def test_repeated_keywords(self):
+        pre_path = os.path.join(os.path.dirname(__file__), 'test_data')
+
+        with utils.smart_open(os.path.join(pre_path, "testrepeatedkeywords.txt")) as f:
+            text = f.read()
+
+        kwds = keywords(text)
+        self.assertTrue(len(kwds.splitlines()))
+
+        kwds_u = keywords(utils.to_unicode(text))
+        self.assertTrue(len(kwds_u.splitlines()))
+
+        kwds_lst = keywords(text, split=True)
+        self.assertTrue(len(kwds_lst))
+
     def test_keywords_runs(self):
         pre_path = os.path.join(os.path.dirname(__file__), 'test_data')
 
@@ -144,6 +170,20 @@ class TestSummarizationTest(unittest.TestCase):
 
         kwds_lst = keywords(text, split=True)
         self.assertTrue(len(kwds_lst))
+
+    def test_low_distinct_words_corpus_summarization_is_none(self):
+        pre_path = os.path.join(os.path.dirname(__file__), 'test_data')
+
+        with utils.smart_open(os.path.join(pre_path, "testlowdistinctwords.txt"), mode="r") as f:
+            text = f.read()
+
+        # Generate the corpus.
+        sentences = text.split("\n")
+        tokens = [sentence.split() for sentence in sentences]
+        dictionary = Dictionary(tokens)
+        corpus = [dictionary.doc2bow(sentence_tokens) for sentence_tokens in tokens]
+
+        self.assertTrue(summarize_corpus(corpus) is None)
 
 if __name__ == '__main__':
     logging.basicConfig(format='%(asctime)s : %(levelname)s : %(message)s', level=logging.DEBUG)
