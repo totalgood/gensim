@@ -739,7 +739,7 @@ class MmReader(object):
                 header = utils.to_unicode(next(lines)).strip()
                 if not header.lower().startswith('%%matrixmarket matrix coordinate real general'):
                     raise ValueError("File %s not in Matrix Market format with coordinate real general; instead found: \n%s" %
-                                    (self.input, header))
+                                     (self.input, header))
             except StopIteration:
                 pass
 
@@ -747,10 +747,15 @@ class MmReader(object):
             for lineno, line in enumerate(lines):
                 line = utils.to_unicode(line)
                 if not line.startswith('%'):
-                    self.num_docs, self.num_terms, self.num_nnz = map(int, line.split())
-                    if not self.transposed:
-                        self.num_docs, self.num_terms = self.num_terms, self.num_docs
-                    break
+                    try:
+                        self.num_docs, self.num_terms, self.num_nnz = map(int, line.split())
+                        if not self.transposed:
+                            self.num_docs, self.num_terms = self.num_terms, self.num_docs
+                        break
+                    except:
+                        logger.error('Unable to read the metadata row for the pickled corpus.')
+                        logger.error('It should contain 3 space-delimitted ints on the second line (num_docs, num_terms, num_nnz).')
+                        raise
 
         logger.info(
             "accepted corpus with %i documents, %i features, %i non-zero entries",
